@@ -1,0 +1,58 @@
+version: '3.1'
+services:
+  backend:
+    image: 'antifomofeed-backend:latest'
+    ports:
+      - "8081:8081"
+    depends_on:
+      - db
+      - link-preview-generator 
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/antifomofeed
+      - SPRING_DATASOURCE_USERNAME=postgres
+      - SPRING_DATASOURCE_PASSWORD=ayam
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=update
+      - TZ=Asia/Kuala_Lumpur
+    volumes: 
+      - discordlogs:/home/app/discordlogs
+      - irclog:/home/app/irclog      
+
+      
+  db:
+    image: 'postgres:15.3-alpine'
+    ports:
+      - "1235:5432"
+    environment:
+      - POSTGRES_PASSWORD=ayam
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=antifomofeed
+    volumes: 
+      - db:/var/lib/postgresql/data
+      
+      
+   
+  frontend:
+    image: 'antifomofeed-frontend:latest'
+    ports:
+      - '5173:5173'
+    restart: on-failure
+  
+  link-preview-generator:
+    image: 'link-preview-generator:latest'
+    ports:
+      - '3500:3500'
+    restart: on-failure
+    init: true
+    security_opt:
+      - seccomp=chrome.json
+    
+  
+volumes:
+  discordlogs:
+    driver: local
+  irclog:
+    driver: local
+  db:
+    driver: local
+
+
