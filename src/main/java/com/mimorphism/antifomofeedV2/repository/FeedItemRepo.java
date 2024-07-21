@@ -1,5 +1,6 @@
 package com.mimorphism.antifomofeedV2.repository;
 
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.repository.PagingAndSortingRepository;
 
@@ -9,11 +10,9 @@ public interface FeedItemRepo extends PagingAndSortingRepository<FeedItem, Long>
 
     List<FeedItem> findAllBy(Pageable settings);
 
-    List<FeedItem> findAllByMarkedForDeletionTrue();
+    Page<FeedItem> findBySourceIn(Pageable settings, List<String> source);
 
     FeedItem findByItemId(Long itemId);
-
-    Long countByOpenedFalseAndMarkedForDeletionFalse();
 
     Long countByOpenedFalse();
 

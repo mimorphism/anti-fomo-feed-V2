@@ -13,5 +13,7 @@ public class Stats {
     public Integer id = 1;
     public Long totalViewedAllTime;
     public Long lastProcessedLineInIrcLogFile;
+    public Long hackerNewsMaxItem;
+    public Long hackerNewsMinItem;
 
 }

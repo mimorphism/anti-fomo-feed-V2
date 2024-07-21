@@ -2,12 +2,13 @@ package com.mimorphism.antifomofeedV2.service;
 
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mimorphism.antifomofeedV2.configuration.DiscordSecretProperty;
 import com.mimorphism.antifomofeedV2.dto.discordlog.DiscordLog;
 import com.mimorphism.antifomofeedV2.dto.discordlog.Message;
 import com.mimorphism.antifomofeedV2.enums.FailedExportErrorType;
-import com.mimorphism.antifomofeedV2.exceptions.AccessDeniedException;
-import com.mimorphism.antifomofeedV2.exceptions.ChannelDoesntExistException;
-import com.mimorphism.antifomofeedV2.exceptions.NothingToExportException;
+import com.mimorphism.antifomofeedV2.exceptions.DCEAccessDeniedException;
+import com.mimorphism.antifomofeedV2.exceptions.DCEChannelDoesntExistException;
+import com.mimorphism.antifomofeedV2.exceptions.DCENothingToExportException;
 import com.mimorphism.antifomofeedV2.repository.*;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -41,28 +42,26 @@ public class DiscordChatExporterService {
     private static final String DCE_EXCEPTION_EXPORT_FAILED = "Export failed.";
     private static final Logger log = LoggerFactory.getLogger(DiscordChatExporterService.class);
     private static final String DCE_EXCEPTION_CHANNEL_DOESNT_EXIST = "DiscordChatExporter.Core.Exceptions.DiscordChatExporterException: Requested resource (channels/%s) does not exist.";
-    private final String DISCORD_TOKEN;
     private final String DISCORD_COMMAND_PATH;
     private final DiscordServerRepo discordServerRepo;
     private final ChannelRepo channelRepo;
     private final FeedItemRepo feedItemRepo;
-
     private final StatsService statsService;
     private final DateTimeFormatter DATETIME_FORMAT = DateTimeFormatter.ofPattern("dd-MMM-yy hh:mm a");
     private final String FILENAME_FORMAT = "discordlogs/%G-%C-lastExportedDate.json";
-
+    private final DiscordSecretProperty discordSecretProperty;
     private int NO_OF_DISCORDLOGFILES_TO_PROCESS_PER_BATCH = 0;
 
     public DiscordChatExporterService(
             FeedItemRepo feedItemRepo,
-            @Value("${discord.token}") String discordToken,
             @Value("${discord.chat.exporter.command.path}") String discordCommandPath,
             StatsRepo statsRepo,
             DiscordServerRepo discordServerRepo,
             ChannelRepo channelRepo,
-            StatsService statsService, @Value("${no.of.files.to.process.for.discordlogfile.per.batch}") int noOfDiscordLogFilesToProcessPerBatch) {
+            StatsService statsService, @Value("${no.of.files.to.process.for.discordlogfile.per.batch}") int noOfDiscordLogFilesToProcessPerBatch,
+            DiscordSecretProperty discordSecretProperty) {
         this.discordServerRepo = discordServerRepo;
-        this.DISCORD_TOKEN = discordToken;
+        this.discordSecretProperty = discordSecretProperty;
         this.DISCORD_COMMAND_PATH = Paths.get("")
                 .toAbsolutePath()
                 .toString() + discordCommandPath;
@@ -294,13 +293,13 @@ public class DiscordChatExporterService {
                 channelRepo.save(channel);
                 log.info("Succesfully saved channel {} of server: {}", channel.getName(), channel.getServerName());
             }
-        } catch (ChannelDoesntExistException ex) {
+        } catch (DCEChannelDoesntExistException ex) {
             log.error("Export failed! : {}", ex.getMessage());
             log.info("Channel will be deleted  : {} server: {}", channel.getName(), channel.getServerName());
             //delete this channel because it doesn't exist anymore
             channelRepo.delete(channel);
             log.info("Channel succesfully deleted  : {}", channel.getName());
-        } catch (NothingToExportException ex) {
+        } catch (DCENothingToExportException ex) {
             log.error("Export failed! Nothing to export!: {}", ex.getMessage());
         } catch (InterruptedException | IOException ex) {
             log.error("Error in discordchatexporter application!");
@@ -309,30 +308,30 @@ public class DiscordChatExporterService {
 
     private void throwExceptionAccordingToErrorType(FailedExportErrorType errorType, Channel channel) {
         if (errorType == FailedExportErrorType.ACCESS_IS_FORBIDDEN) {
-            throw new AccessDeniedException(channel);
+            throw new DCEAccessDeniedException(channel);
         } else if (errorType == FailedExportErrorType.CHANNEL_DOESNT_EXIST) {
-            throw new ChannelDoesntExistException(channel);
+            throw new DCEChannelDoesntExistException(channel);
         } else if (errorType == FailedExportErrorType.NOTHING_TO_EXPORT) {
-            throw new NothingToExportException(channel);
+            throw new DCENothingToExportException(channel);
         }
     }
 
     private ProcessBuilder exportSingleChannelPB(String channelId) {
-        return new ProcessBuilder("dotnet", DISCORD_COMMAND_PATH, "export", "-c", channelId, "-t", DISCORD_TOKEN, "--filter", "has:link", "-f", "Json", "-p", "20mb", "-o", FILENAME_FORMAT)
+        return new ProcessBuilder("dotnet", DISCORD_COMMAND_PATH, "export", "-c", channelId, "-t", discordSecretProperty.getToken(), "--filter", "has:link", "-f", "Json", "-p", "20mb", "-o", FILENAME_FORMAT)
                 .redirectOutput(ProcessBuilder.Redirect.PIPE);
     }
 
     private ProcessBuilder exportSingleChannelPBWithLastExportedDateTime(String channelId, String lastExportedDateTime) {
-        return new ProcessBuilder("dotnet", DISCORD_COMMAND_PATH, "export", "-c", channelId, "--after", lastExportedDateTime, "-t", DISCORD_TOKEN, "--filter", "has:link", "-f", "Json", "-p", "20mb", "-o", getCustomFilenameWithLastExportedDate(lastExportedDateTime))
+        return new ProcessBuilder("dotnet", DISCORD_COMMAND_PATH, "export", "-c", channelId, "--after", lastExportedDateTime, "-t", discordSecretProperty.getToken(), "--filter", "has:link", "-f", "Json", "-p", "20mb", "-o", getCustomFilenameWithLastExportedDate(lastExportedDateTime))
                 .redirectOutput(ProcessBuilder.Redirect.PIPE);
     }
 
     private ProcessBuilder getServerListPB() {
-        return new ProcessBuilder("dotnet", DISCORD_COMMAND_PATH, "guilds", "-t", DISCORD_TOKEN);
+        return new ProcessBuilder("dotnet", DISCORD_COMMAND_PATH, "guilds", "-t", discordSecretProperty.getToken());
     }
 
     private ProcessBuilder getChannelsFromServerPB(String serverId) {
-        return new ProcessBuilder("dotnet", DISCORD_COMMAND_PATH, "channels", "-t", DISCORD_TOKEN, "-g", serverId);
+        return new ProcessBuilder("dotnet", DISCORD_COMMAND_PATH, "channels", "-t", discordSecretProperty.getToken(), "-g", serverId);
     }
 
 

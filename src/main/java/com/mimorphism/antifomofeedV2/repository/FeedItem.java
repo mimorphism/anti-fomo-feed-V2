@@ -34,9 +34,10 @@ public class FeedItem {
     @Column(columnDefinition = "TEXT")
     private String image = "No image";
 
-    private boolean markedForDeletion = false;
-
     private boolean opened = false;
+
+    @NotNull
+    private boolean deleted = false;
 
     private String source;
 

@@ -1,6 +1,6 @@
 package com.mimorphism.antifomofeedV2.service;
 
-import com.mimorphism.antifomofeedV2.repository.FeedItem;
+import com.mimorphism.antifomofeedV2.enums.SourceType;
 import com.mimorphism.antifomofeedV2.repository.FeedItemRepo;
 import com.mimorphism.antifomofeedV2.repository.StatsRepo;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -9,9 +9,7 @@ import org.apache.commons.validator.routines.UrlValidator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -27,11 +25,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.text.MessageFormat;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
@@ -45,7 +40,6 @@ public class IRCBacklogService {
 
     private static final Logger log = LoggerFactory.getLogger(IRCBacklogService.class);
     private final FeedItemRepo feedItemRepo;
-    private final StatsRepo statsRepo;
 
     private final StatsService statsService;
     private final String URL_LOG_FILE;
@@ -55,6 +49,8 @@ public class IRCBacklogService {
     private final int NO_OF_LINKS_TO_PROCESS_PER_SUBMISSION_TO_LPG;
     private final int NO_OF_LINKS_TO_PROCESS_PER_BATCH;
 
+    private final LinkPreviewGeneratorService linkPreviewGeneratorService;
+
 
     public IRCBacklogService(
             FeedItemRepo feedItemRepo,
@@ -62,13 +58,13 @@ public class IRCBacklogService {
             @Value("${feed.generator.endpoint}") String feedGeneratorEndpoint,
             StatsRepo statsRepo,
             StatsService statsService, @Value("${no.of.links.to.process.for.irc}") int noOfLinksToProcess,
-            @Value("${no.of.items.to.process.for.per.batch}") int noOfLinksToProcessPerBatch) {
+            @Value("${no.of.items.to.process.for.per.batch}") int noOfLinksToProcessPerBatch, LinkPreviewGeneratorService linkPreviewGeneratorService) {
         this.feedItemRepo = feedItemRepo;
         this.FEED_GENERATOR_ENDPOINT = feedGeneratorEndpoint;
         this.URL_LOG_FILE = urlLogFile;
-        this.statsRepo = statsRepo;
         this.statsService = statsService;
         NO_OF_LINKS_TO_PROCESS_PER_SUBMISSION_TO_LPG = noOfLinksToProcess;
+        this.linkPreviewGeneratorService = linkPreviewGeneratorService;
         this.client = WebClient.builder().baseUrl(FEED_GENERATOR_ENDPOINT).build();
         this.urlValidator = new UrlValidator(new String[]{"http", "https"}, UrlValidator.ALLOW_ALL_SCHEMES);
         this.NO_OF_LINKS_TO_PROCESS_PER_BATCH = noOfLinksToProcessPerBatch;
@@ -91,7 +87,7 @@ public class IRCBacklogService {
             Path filePath = Paths.get(URL_LOG_FILE);
             int limitPerBatch = 0;
             long currentLine = 0;
-            long lineToStartProcessing = statsRepo.findById(1).orElseThrow().getLastProcessedLineInIrcLogFile();
+            long lineToStartProcessing = statsService.getLineToStartProcessingForIRC();
 
             try (FileChannel channel = FileChannel.open(filePath, StandardOpenOption.READ);
                  FileLock lock = channel.lock(0, Long.MAX_VALUE, true);
@@ -127,9 +123,7 @@ public class IRCBacklogService {
                 executorService.shutdownNow();
                 throw new RuntimeException(e);
             } finally {
-                var bossUser = statsRepo.findById(1).orElseThrow();
-                bossUser.setLastProcessedLineInIrcLogFile(currentLine);
-                statsRepo.save(bossUser);
+                statsService.setLineToStartProcessingForIRC(currentLine);
                 log.info("last processed line saved to stats table: {}", currentLine);
             }
         } else {
@@ -138,41 +132,9 @@ public class IRCBacklogService {
         }
     }
 
-    private void processLink(List<String> url) {
-        Map<String, List<String>> bodyValues = new HashMap<>();
-        bodyValues.put("urls", url);
-        List<FeedItem> response = client.post()
-                .uri("/generatePreview")
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON)
-                .body(Mono.just(bodyValues), Map.class)
-                .retrieve()
-                .onStatus(status -> status.value() >= HttpStatus.INTERNAL_SERVER_ERROR.value(),
-                        error -> Mono.error(new RuntimeException("link preview generator service error")))
-                .bodyToMono(new ParameterizedTypeReference<List<FeedItem>>() {
-                })
-                .onErrorStop()
-                .block();
-        if (!response.isEmpty()) {
-            for (var processedLink : response) {
-                //possible null value due to failed processing of a url(e.g dead link)
-                if (processedLink != null && !StringUtils.isBlank(processedLink.getUrl())) {
-                    processedLink.setSource("IRC");
-                    processedLink.setCreationDate(LocalDateTime.now());
-                    feedItemRepo.save(processedLink);
-                    log.info("link processing success for : " + processedLink.getUrl());
-                    statsService.sendStatsUpdate();
-                }
-
-            }
-        } else {
-            log.error("Processing by Link Preview Generator service failed!");
-        }
-    }
-
     private Runnable getLinkProcessingTask(List<String> urls) {
         Runnable task = () -> {
-            processLink(urls);
+            linkPreviewGeneratorService.processLink(urls, SourceType.IRC);
             log.info("Job of " + urls.size() + " passsed to process executor service");
         };
         return task;
